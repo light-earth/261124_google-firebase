@@ -1,0 +1,72 @@
+// Firebase 콘솔 > Firestore Database > 규칙 탭에 입력하세요.
+// 관리자 UID 목록은 .env 의 VITE_ADMIN_UIDS 와 같게 유지하세요.
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isAdmin() {
+      return signedIn() && request.auth.uid in [
+        'LNWptrUrkxSqoaP1hcBZhjgrLJH2'
+      ];
+    }
+    function isStr(v, min, max) { return v is string && v.size() >= min && v.size() <= max; }
+    function optStr(m, k) { return !(k in m) || isStr(m[k], 0, 5000); }
+
+    function validRecord(r) {
+      return r is map
+        && r.keys().hasAll(['topic', 'hypothesis', 'method'])
+        && r.keys().hasOnly(['topic', 'hypothesis', 'method', 'data', 'analysis', 'conclusion', 'reflection'])
+        && isStr(r.topic, 1, 5000) && isStr(r.hypothesis, 1, 5000) && isStr(r.method, 1, 5000)
+        && optStr(r, 'data') && optStr(r, 'analysis') && optStr(r, 'conclusion') && optStr(r, 'reflection');
+    }
+
+    function validCreate(d) {
+      let fields = ['uid', 'name', 'email', 'grade', 'record', 'finalAnalysis', 'finalConclusion',
+                    'chatLog', 'images', 'model', 'firstSentAt', 'submittedAtClient',
+                    'submittedAt', 'durationSec', 'durationText'];
+      return d.keys().hasAll(fields) && d.keys().hasOnly(fields)
+        && d.uid == request.auth.uid
+        && isStr(d.name, 0, 100)
+        && d.email == request.auth.token.email
+        && d.grade is int && d.grade >= 3 && d.grade <= 6
+        && validRecord(d.record)
+        && isStr(d.finalAnalysis, 1, 5000)
+        && isStr(d.finalConclusion, 1, 5000)
+        && d.chatLog is list && d.chatLog.size() <= 300
+        && d.images is list && d.images.size() <= 30
+        && isStr(d.model, 1, 50)
+        && isStr(d.firstSentAt, 1, 40)
+        && isStr(d.submittedAtClient, 1, 40)
+        && d.submittedAt == request.time
+        && d.durationSec is int && d.durationSec >= 0
+        && isStr(d.durationText, 1, 40);
+    }
+
+    // 문서 ID = 학생 UID (1인 1회 제출)
+    match /submissions/{studentUid} {
+      // 제출: 본인 UID 문서만, 1회 (이미 있으면 create가 아니라 update로 처리되어 거부됨)
+      allow create: if signedIn()
+                    && studentUid == request.auth.uid
+                    && validCreate(request.resource.data);
+
+      // 목록 조회: 관리자만
+      allow list: if isAdmin();
+      // 단건 조회: 관리자 / 학생은 본인 문서 1건만 (제출 여부 확인·수정란 채우기용)
+      allow get: if isAdmin() || (signedIn() && studentUid == request.auth.uid);
+
+      // 수정: 학생 본인만, 데이터 분석·탐구 결론만 + updatedAt 필수
+      allow update: if signedIn()
+                    && resource.data.uid == request.auth.uid
+                    && request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['finalAnalysis', 'finalConclusion', 'updatedAt'])
+                    && request.resource.data.updatedAt == request.time
+                    && isStr(request.resource.data.finalAnalysis, 1, 5000)
+                    && isStr(request.resource.data.finalConclusion, 1, 5000);
+
+      // 삭제: 관리자만
+      allow delete: if isAdmin();
+    }
+    // 그 외 모든 경로는 기본 거부
+  }
+}

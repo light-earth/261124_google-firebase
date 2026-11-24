@@ -1,0 +1,39 @@
+// Firebase 콘솔 > Storage > 규칙 탭에 입력하세요.
+// 관리자 UID 목록은 .env 의 VITE_ADMIN_UIDS 와 같게 유지하세요.
+// 처음 게시할 때 "Firestore 접근 권한 부여" 안내가 나오면 허용하세요 (firestore.exists 사용).
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isAdmin() {
+      return request.auth != null && request.auth.uid in [
+        'LNWptrUrkxSqoaP1hcBZhjgrLJH2'
+      ];
+    }
+    function isOwner(uid) { return request.auth != null && request.auth.uid == uid; }
+
+    // 제출 문서가 아직 없을 때만 업로드 가능 → 제출 후 사진 교체 불가
+    function notSubmittedYet(uid) {
+      return !firestore.exists(/databases/(default)/documents/submissions/$(uid));
+    }
+
+    // submissions/{학생UID}/{제출ID = 학생UID}/{data-1.png | graph-2.png ...}
+    match /submissions/{uid}/{submissionId}/{fileName} {
+      // 읽기: 본인만 (getDownloadURL에 필요)
+      allow read: if isOwner(uid);
+
+      // 업로드: 본인 폴더, PNG, 5MB 이하, 제출 전에만
+      // (update 허용 이유: 제출이 중간에 실패해 다시 시도할 때 같은 파일명을 덮어씀)
+      allow create, update: if isOwner(uid)
+                            && submissionId == uid
+                            && fileName.matches('(data|graph)-[0-9]+[.]png')
+                            && request.resource.contentType == 'image/png'
+                            && request.resource.size <= 5 * 1024 * 1024
+                            && notSubmittedYet(uid);
+
+      // 삭제: 관리자만
+      allow delete: if isAdmin();
+    }
+    // 그 외 모든 경로는 기본 거부
+  }
+}
